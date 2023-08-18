@@ -1,14 +1,14 @@
 package com.deve.wisdom.mapper;
 
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.deve.wisdom.model.entity.User;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 
 /**
- * 用户数据库操作
- *
- * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
- * @from <a href="https://yupi.icu">编程导航知识星球</a>
- */
+* @author lv jiang er hao
+* @description 针对表【user(用户)】的数据库操作Mapper
+* @createDate 2023-08-18 12:51:58
+* @Entity com.deve.wisdom.model.entity.User
+*/
 public interface UserMapper extends BaseMapper<User> {
 
 }
