@@ -1,10 +1,12 @@
 package com.deve.wisdom.controller;
 
+import cn.hutool.core.io.FileUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.deve.wisdom.constant.AiConstant;
 import com.deve.wisdom.constant.CommonConstant;
 import com.deve.wisdom.manager.AiManager;
+import com.deve.wisdom.manager.RedisLimiterManager;
 import com.deve.wisdom.model.dto.chart.*;
 import com.deve.wisdom.model.entity.User;
 import com.deve.wisdom.model.vo.BiResponse;
@@ -40,7 +42,7 @@ import static com.deve.wisdom.utils.ExcelUtils.excel2Csv;
 /**
  * 帖子接口
  *
- * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
+ * @author <a href="https://github.com/liyupi">devedmc</a>
  * @from <a href="https://yupi.icu">编程导航知识星球</a>
  */
 @RestController
@@ -57,6 +59,8 @@ public class ChartController {
     @Resource
     private AiManager aiManager;
 
+    @Resource
+    private RedisLimiterManager redisLimiterManager;
 
     private final static Gson GSON = new Gson();
 
@@ -252,13 +256,14 @@ public class ChartController {
         String goal = genChartByAiRequest.getGoal();
         String chartType = genChartByAiRequest.getChartType();
         User user = userService.getLoginUser(request);
-        //todo:校验
-        ThrowUtils.throwIf(StringUtils.isBlank(goal),ErrorCode.PARAMS_ERROR,"目标为空");
+        redisLimiterManager.doRateLimite("genChartByAi_"+user.getId());
+        //todo:校验文件:大小 内容 名称 后缀
+        boolean safe = checkFile(multipartFile);
+        ThrowUtils.throwIf(!safe&&StringUtils.isBlank(goal),ErrorCode.PARAMS_ERROR,"目标为空");
         String goal0=goal;
         if(StringUtils.isNotBlank(chartType)){
             goal0+=",请使用"+chartType;
         }
-        User loginUser = userService.getLoginUser(request);
         // 文件目录：根据业务、用户来划分
         //todo:改善UUID生成方案
         String result = excel2Csv(multipartFile);
@@ -288,6 +293,19 @@ public class ChartController {
         biResponse.setGenResult(genResult);
         biResponse.setChartId(chart.getId());
         return ResultUtils.success(biResponse);
+    }
+    private static final Long ONE_MB=10*1024*1024L;
+    private boolean checkFile(MultipartFile multipartFile) {
+        long size = multipartFile.getSize();
+        if(size>ONE_MB){
+            return false;
+        }
+        String originalFilename = multipartFile.getOriginalFilename();
+        String suffix = FileUtil.getSuffix(originalFilename);
+        if(suffix!="xlsx"||suffix!="xls"){
+            return false;
+        }
+        return true;
     }
 
 }
