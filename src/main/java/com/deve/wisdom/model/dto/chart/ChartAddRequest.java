@@ -18,6 +18,10 @@ import java.util.List;
  */
 @Data
 public class ChartAddRequest implements Serializable {
+    /**
+     * 图表名称
+     */
+    private String name;
 
     /**
      * 分析目标
@@ -35,6 +39,6 @@ public class ChartAddRequest implements Serializable {
     private String chartType;
 
 
-    @TableField(exist = false)
+
     private static final long serialVersionUID = 1L;
 }

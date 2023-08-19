@@ -2,14 +2,12 @@ package com.deve.wisdom.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.deve.wisdom.constant.AiConstant;
 import com.deve.wisdom.constant.CommonConstant;
-import com.deve.wisdom.model.dto.chart.ChartAddRequest;
-import com.deve.wisdom.model.dto.chart.ChartEditRequest;
-import com.deve.wisdom.model.dto.chart.ChartQueryRequest;
-import com.deve.wisdom.model.dto.chart.ChartUpdateRequest;
-import com.deve.wisdom.model.dto.post.PostQueryRequest;
-import com.deve.wisdom.model.entity.Post;
+import com.deve.wisdom.manager.AiManager;
+import com.deve.wisdom.model.dto.chart.*;
 import com.deve.wisdom.model.entity.User;
+import com.deve.wisdom.model.vo.BiResponse;
 import com.deve.wisdom.service.UserService;
 import com.deve.wisdom.utils.SqlUtils;
 import com.google.gson.Gson;
@@ -25,15 +23,19 @@ import com.deve.wisdom.model.entity.Chart;
 
 import com.deve.wisdom.service.ChartService;
 
-import java.util.List;
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+
+
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import static com.deve.wisdom.utils.ExcelUtils.excel2Csv;
 
 /**
  * 帖子接口
@@ -51,6 +53,10 @@ public class ChartController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private AiManager aiManager;
+
 
     private final static Gson GSON = new Gson();
 
@@ -222,6 +228,7 @@ public class ChartController {
             return queryWrapper;
         }
         String chartType = chartQueryRequest.getChartType();
+        String name = chartQueryRequest.getName();
         String goal = chartQueryRequest.getGoal();
         Long id = chartQueryRequest.getId();
         Long userId = chartQueryRequest.getUserId();
@@ -229,6 +236,7 @@ public class ChartController {
         String sortField = chartQueryRequest.getSortField();
         // 拼接查询条件
         queryWrapper.eq(id!=null&&id>0,"id",id);
+        queryWrapper.like(ObjectUtils.isNotEmpty(name),"name",name);
         queryWrapper.ne(ObjectUtils.isNotEmpty(chartType), "chartType", chartType);
         queryWrapper.eq(ObjectUtils.isNotEmpty(goal), "goal", goal);
         queryWrapper.eq(ObjectUtils.isNotEmpty(userId), "userId", userId);
@@ -236,6 +244,50 @@ public class ChartController {
         queryWrapper.orderBy(SqlUtils.validSortField(sortField), sortOrder.equals(CommonConstant.SORT_ORDER_ASC),
                 sortField);
         return queryWrapper;
+    }
+    @PostMapping("/gen")
+    public BaseResponse<BiResponse> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
+                                             GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
+        String name = genChartByAiRequest.getName();
+        String goal = genChartByAiRequest.getGoal();
+        String chartType = genChartByAiRequest.getChartType();
+        User user = userService.getLoginUser(request);
+        //todo:校验
+        ThrowUtils.throwIf(StringUtils.isBlank(goal),ErrorCode.PARAMS_ERROR,"目标为空");
+        String goal0=goal;
+        if(StringUtils.isNotBlank(chartType)){
+            goal0+=",请使用"+chartType;
+        }
+        User loginUser = userService.getLoginUser(request);
+        // 文件目录：根据业务、用户来划分
+        //todo:改善UUID生成方案
+        String result = excel2Csv(multipartFile);
+        StringBuilder userInputForAnalyse = new StringBuilder();
+        userInputForAnalyse.append("分析目标:").append(goal0).append("\n");
+        userInputForAnalyse.append("数据:").append("\n");
+        userInputForAnalyse.append(result);
+        String analyseResult=aiManager.doChat(AiConstant.ANALYSE_MODEL_ID,userInputForAnalyse.toString());
+        String[] split = analyseResult.split("【【【【【");
+        if(split.length>3){
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR,"ai数据生成错误");
+        }
+        String genChart=split[1];
+        String genResult=split[2].trim();
+        Chart chart = new Chart();
+        chart.setName(name);
+        chart.setGoal(goal);
+        chart.setChartData(result);
+        chart.setChartType(chartType);
+        chart.setGenChart(genChart);
+        chart.setGenResult(analyseResult);
+        chart.setUserId(user.getId());
+        boolean saveResult = chartService.save(chart);
+        ThrowUtils.throwIf(!saveResult,ErrorCode.SYSTEM_ERROR);
+        BiResponse biResponse = new BiResponse();
+        biResponse.setGenChart(genChart);
+        biResponse.setGenResult(genResult);
+        biResponse.setChartId(chart.getId());
+        return ResultUtils.success(biResponse);
     }
 
 }
