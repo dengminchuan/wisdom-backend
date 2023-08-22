@@ -9,6 +9,7 @@ import com.deve.wisdom.manager.AiManager;
 import com.deve.wisdom.manager.RedisLimiterManager;
 import com.deve.wisdom.model.dto.chart.*;
 import com.deve.wisdom.model.entity.User;
+import com.deve.wisdom.model.enums.ExecMessage;
 import com.deve.wisdom.model.vo.BiResponse;
 import com.deve.wisdom.service.UserService;
 import com.deve.wisdom.utils.SqlUtils;
@@ -37,6 +38,9 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadPoolExecutor;
+
 import static com.deve.wisdom.utils.ExcelUtils.excel2Csv;
 
 /**
@@ -61,6 +65,9 @@ public class ChartController {
 
     @Resource
     private RedisLimiterManager redisLimiterManager;
+
+    @Resource
+    private ThreadPoolExecutor threadPoolExecutor;
 
     private final static Gson GSON = new Gson();
 
@@ -249,15 +256,15 @@ public class ChartController {
                 sortField);
         return queryWrapper;
     }
+
     @PostMapping("/gen")
     public BaseResponse<BiResponse> genChartByAi(@RequestPart("file") MultipartFile multipartFile,
-                                             GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
+                                                 GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
         String name = genChartByAiRequest.getName();
         String goal = genChartByAiRequest.getGoal();
         String chartType = genChartByAiRequest.getChartType();
         User user = userService.getLoginUser(request);
         redisLimiterManager.doRateLimite("genChartByAi_"+user.getId());
-        //todo:校验文件:大小 内容 名称 后缀
         boolean safe = checkFile(multipartFile);
         ThrowUtils.throwIf(!safe&&StringUtils.isBlank(goal),ErrorCode.PARAMS_ERROR,"目标为空");
         String goal0=goal;
@@ -265,7 +272,6 @@ public class ChartController {
             goal0+=",请使用"+chartType;
         }
         // 文件目录：根据业务、用户来划分
-        //todo:改善UUID生成方案
         String result = excel2Csv(multipartFile);
         StringBuilder userInputForAnalyse = new StringBuilder();
         userInputForAnalyse.append("分析目标:").append(goal0).append("\n");
@@ -286,6 +292,7 @@ public class ChartController {
         chart.setGenChart(genChart);
         chart.setGenResult(analyseResult);
         chart.setUserId(user.getId());
+        chart.setStatus("succeed");
         boolean saveResult = chartService.save(chart);
         ThrowUtils.throwIf(!saveResult,ErrorCode.SYSTEM_ERROR);
         BiResponse biResponse = new BiResponse();
@@ -293,6 +300,77 @@ public class ChartController {
         biResponse.setGenResult(genResult);
         biResponse.setChartId(chart.getId());
         return ResultUtils.success(biResponse);
+    }
+    @PostMapping("/gen/async")
+    public BaseResponse<BiResponse> genChartByAiAsync(@RequestPart("file") MultipartFile multipartFile,
+                                             GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
+        String name = genChartByAiRequest.getName();
+        String goal = genChartByAiRequest.getGoal();
+        String chartType = genChartByAiRequest.getChartType();
+        User user = userService.getLoginUser(request);
+        redisLimiterManager.doRateLimite("genChartByAi_"+user.getId());
+        //todo:校验文件:大小 内容 名称 后缀
+        boolean safe = checkFile(multipartFile);
+        ThrowUtils.throwIf(!safe&&StringUtils.isBlank(goal),ErrorCode.PARAMS_ERROR,"目标为空");
+        String result = excel2Csv(multipartFile);
+        Chart chart = new Chart();
+        chart.setName(name);
+        chart.setGoal(goal);
+        chart.setChartType(chartType);
+        chart.setChartData(result);
+        chart.setStatus("wait");
+        chart.setUserId(user.getId());
+        log.info("<====insert chart id="+chart.getId()+" ===>");
+        boolean saveResult1 = chartService.save(chart);
+        log.info("<====insert chart id="+chart.getId()+" ===>");
+        if(!saveResult1){
+            handleChartUpdateError(chart.getId(), "保存图表失败");
+        }
+        CompletableFuture.runAsync(() -> {
+            Chart updateChart = new Chart();
+            updateChart.setId(chart.getId());
+            updateChart.setStatus("running");
+            boolean save = chartService.updateById(updateChart);
+            if(!save){
+                handleChartUpdateError(updateChart.getId(),"更新为运行状态失败");
+            }
+            //调用ai
+            String goal0=goal;
+            if(StringUtils.isNotBlank(chartType)){
+                goal0+=",请使用"+chartType;
+            }
+            StringBuilder userInputForAnalyse = new StringBuilder();
+            userInputForAnalyse.append("分析目标:").append(goal0).append("\n");
+            userInputForAnalyse.append("数据:").append("\n");
+            userInputForAnalyse.append(result);
+            String analyseResult=aiManager.doChat(AiConstant.ANALYSE_MODEL_ID,userInputForAnalyse.toString());
+            String[] split = analyseResult.split("【【【【【");
+            if(split.length>3){
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR,"ai数据生成错误");
+            }
+            String genChart=split[1].trim();
+            String genResult=split[2].trim();
+            Chart updateChartAfterAi = new Chart();
+            updateChartAfterAi.setGenChart(genChart);
+            updateChartAfterAi.setGenResult(genResult);
+            updateChartAfterAi.setId(chart.getId());
+            updateChartAfterAi.setStatus("succeed");
+            boolean saveResult = chartService.updateById(updateChartAfterAi);
+            ThrowUtils.throwIf(!saveResult,ErrorCode.SYSTEM_ERROR);
+        },threadPoolExecutor);
+        BiResponse biResponse = new BiResponse();
+        biResponse.setChartId(chart.getId());
+        return ResultUtils.success(biResponse);
+    }
+    private void handleChartUpdateError(Long id,String message){
+        Chart chart = new Chart();
+        chart.setExecMessage(message);
+        chart.setStatus("failed");
+        chart.setId(id);
+        boolean updateResult = chartService.updateById(chart);
+        if(!updateResult){
+            log.error("更新图表状态失败,图表id:"+id+message);
+        }
     }
     private static final Long ONE_MB=10*1024*1024L;
     private boolean checkFile(MultipartFile multipartFile) {

@@ -13,12 +13,8 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-/**
- * 请求响应日志 AOP
- *
- * @author <a href="https://github.com/liyupi">devedmc</a>
- * @from <a href="https://yupi.icu">编程导航知识星球</a>
- **/
+
+
 @Aspect
 @Component
 @Slf4j
@@ -27,7 +23,7 @@ public class LogInterceptor {
     /**
      * 执行拦截
      */
-    @Around("execution(* com.yupi.springbootinit.controller.*.*(..))")
+    @Around("execution(* com.deve.wisdom.controller.*.*(..))")
     public Object doInterceptor(ProceedingJoinPoint point) throws Throwable {
         // 计时
         StopWatch stopWatch = new StopWatch();

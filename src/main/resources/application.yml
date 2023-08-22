@@ -48,3 +48,8 @@ yuapi:
   client:
     access-key: 5brx3wto91tbqouskbd36p5a5esare2l
     secret-key: cca58qhdbzvyubjkhhvquv7jbcapikw5
+thread:
+  pool:
+    core-pool-size: 13
+    maximum-pool-size: 26
+    keep-alive-time: 100
